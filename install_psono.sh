@@ -1,30 +1,44 @@
 #!/bin/bash
 
 set -e
-INSTALL_DIR='/opt'
-export INSTALL_DIR
-cd $INSTALL_DIR
-export PSONO_DOCKER_PREFIX='psono'
+
+export PSONO_DOCKER_PREFIX='psono-docker'
+
+set_install_dir() {
+  INSTALL_DIR='/opt'
+  export INSTALL_DIR
+
+  echo "Where do you want Psono to be installed..."
+  read -p "INSTALL_DIR [default: $INSTALL_DIR]: " INSTALL_DIR_NEW
+  if [ "$INSTALL_DIR_NEW" != "" ]; then
+    export PSONO_VERSION=$PSONO_VERSION_NEW
+  fi
+
+  mkdir -p $INSTALL_DIR
+  cd $INSTALL_DIR
+  rm -Rf $INSTALL_DIR/psono/$PSONO_DOCKER_PREFIX
+  mkdir -p $INSTALL_DIR/psono/$PSONO_DOCKER_PREFIX
+}
 
 ask_parameters() {
 
-  export PSONO_PROTOCOL="http://"
-  export PSONO_VERSION=EE
-  export PSONO_EXTERNAL_PORT=80
-  export PSONO_EXTERNAL_PORT_SECURE=443
-  export PSONO_POSTGRES_PORT=5432
-  export PSONO_POSTGRES_PASSWORD='WPBqQpvZEGpDrA3E'
-  export PSONO_USERDOMAIN=localhost
-  export PSONO_WEBDOMAIN='psono.local'
-  export PSONO_POSTGRES_USER=postgres
-  export PSONO_POSTGRES_DB=postgres
-  export PSONO_POSTGRES_HOST=$PSONO_DOCKER_PREFIX-psono-postgres
-  export PSONO_INSTALL_ACME=0
-
-  if [ -f "$INSTALL_DIR/$PSONO_DOCKER_PREFIX/.psonoenv" ]; then
+  if [ -f "$INSTALL_DIR/psono/$PSONO_DOCKER_PREFIX/.psonoenv" ]; then
     set -o allexport
     source $INSTALL_DIR/psono/$PSONO_DOCKER_PREFIX/.psonoenv
     set +o allexport
+  else
+    export PSONO_PROTOCOL="http://"
+    export PSONO_VERSION=EE
+    export PSONO_EXTERNAL_PORT=80
+    export PSONO_EXTERNAL_PORT_SECURE=443
+    export PSONO_POSTGRES_PORT=5432
+    export PSONO_POSTGRES_PASSWORD=`date +%s | sha256sum | base64 | head -c 16`
+    export PSONO_USERDOMAIN=localhost
+    export PSONO_WEBDOMAIN='psono.local'
+    export PSONO_POSTGRES_USER=postgres
+    export PSONO_POSTGRES_DB=postgres
+    export PSONO_POSTGRES_HOST=$PSONO_DOCKER_PREFIX-psono-postgres
+    export PSONO_INSTALL_ACME=0
   fi
 
   echo "What version do you want to install? (Usually EE. Potential other choices are CE or DEV)"
@@ -104,20 +118,21 @@ ask_parameters() {
   rm -Rf $INSTALL_DIR/psono/$PSONO_DOCKER_PREFIX/.psonoenv
 
   cat <<EOF > $INSTALL_DIR/psono/$PSONO_DOCKER_PREFIX/.psonoenv
-PSONO_VERSION='$PSONO_VERSION'
-PSONO_EXTERNAL_PORT='$PSONO_EXTERNAL_PORT'
-PSONO_EXTERNAL_PORT_SECURE='$PSONO_EXTERNAL_PORT_SECURE'
-PSONO_POSTGRES_PORT='$PSONO_POSTGRES_PORT'
-PSONO_POSTGRES_PASSWORD='$'PSONO_POSTGRES_PASSWORD'
-PSONO_USERDOMAIN='$'PSONO_USERDOMAIN'
-PSONO_WEBDOMAIN='$PSONO_WEBDOMAIN'
-PSONO_POSTGRES_USER='$PSONO_POSTGRES_USER'
-PSONO_POSTGRES_DB='$PSONO_POSTGRES_DB'
-PSONO_POSTGRES_HOST='$PSONO_POSTGRES_HOST'
+PSONO_VERSION='${PSONO_VERSION}'
+PSONO_EXTERNAL_PORT='${PSONO_EXTERNAL_PORT}'
+PSONO_EXTERNAL_PORT_SECURE='${PSONO_EXTERNAL_PORT_SECURE}'
+PSONO_POSTGRES_PORT='${PSONO_POSTGRES_PORT}'
+PSONO_POSTGRES_PASSWORD='${PSONO_POSTGRES_PASSWORD}'
+PSONO_USERDOMAIN='${PSONO_USERDOMAIN}'
+PSONO_WEBDOMAIN='${PSONO_WEBDOMAIN}'
+PSONO_POSTGRES_USER='${PSONO_POSTGRES_USER}'
+PSONO_POSTGRES_DB='${PSONO_POSTGRES_DB}'
+PSONO_POSTGRES_HOST='${PSONO_POSTGRES_HOST}'
 EOF
 
-  mkdir -p $INSTALL_DIR/psono/$PSONO_DOCKER_PREFIX || true
+  ## Create .env for docker-compose
   cp $INSTALL_DIR/psono/$PSONO_DOCKER_PREFIX/.psonoenv $INSTALL_DIR/psono/$PSONO_DOCKER_PREFIX/.env
+
 }
 
 
@@ -149,20 +164,39 @@ install_acme() {
 
 install_base_dependencies () {
     echo "Install dependencies (curl and lsof)..."
-
+    deps='curl lsof'
     set +e
-    apt-get update
-    for dep in curl lsof
-    do 
-
-      which $dep
-      if [ $? -eq 0 ]
-      then
-        echo "$dep already installed"
-      else
-        apt-get install -y $dep
-      fi
-    done
+    if [ "$OS" = "ubuntu" ] \
+    || [ "$OS" = "debian" ]
+    then
+      apt-get update
+      for dep in $deps
+      do 
+        which $dep
+        if [ $? -eq 0 ]
+        then
+          echo "$dep already installed"
+        else
+          apt-get install -y $dep
+        fi
+      done
+    fi
+    if [ "$OS" = "centos" ] \
+    || [ "$OS" = "rhel" ] \
+    || [ "$OS" = "fedora" ]
+    then
+      yum check-update
+      for dep in $deps
+      do 
+        which $dep
+        if [ $? -eq 0 ]
+        then
+          echo "$dep already installed"
+        else
+          yum install -y $dep
+        fi
+      done
+    fi
     set -e
     echo "Install curl and lsof ... finished"
 }
@@ -170,10 +204,31 @@ install_base_dependencies () {
 
 install_git () {
     echo "Install git"
-
-    apt-get update &> /dev/null
-    apt-get install -y git &> /dev/null
-
+    if [ "$OS" = "ubuntu" ] \
+    || [ "$OS" = "debian" ]
+    then
+      apt-get update
+      which git
+      if [ $? -eq 0 ]
+      then
+        echo "Git already installed"
+      else
+        apt-get install -y git
+      fi
+    fi
+    if [ "$OS" = "centos" ] \
+    || [ "$OS" = "rhel" ] \
+    || [ "$OS" = "fedora" ]
+    then
+      yum check-update
+      which git
+      if [ $? -eq 0 ]
+      then
+        echo "Git already installed"
+      else
+        yum install -y git
+      fi
+    fi
     echo "Install git ... finished"
 }
 
@@ -202,13 +257,14 @@ install_docker_if_not_exists () {
         sh get-docker.sh
         rm get-docker.sh
     fi
+    systemctl start docker
     echo "Install docker if it is not already installed ... finished"
 }
 
 
 install_docker_compose_if_not_exists () {
     echo "Install docker compose if it is not already installed"
-
+    echo $PATH | grep '/usr/local/bin' || export PATH="$PATH:/usr/local/bin"
     set +e
     which docker-compose
 
@@ -221,14 +277,16 @@ install_docker_compose_if_not_exists () {
         else
             curl -L "https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
             chmod +x /usr/local/bin/docker-compose
+            ln -s /usr/local/bin/docker-compose /usr/bin/docker-compose
+
         fi
     else
         curl -L "https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
         chmod +x /usr/local/bin/docker-compose
+        ln -s /usr/local/bin/docker-compose /usr/bin/docker-compose
     fi
 
     set -e
-
     echo "Install docker compose if it is not already installed ... finished"
 }
 
@@ -928,14 +986,13 @@ install_alias () {
 
 detect_os () {
     echo "Start detect OS"
-    if [ `which lsb_release 2>/dev/null` ]; then
-        DIST=`lsb_release -c | cut -f2`
-        OS=`lsb_release -i | cut -f2 | awk '{ print tolower($1) }'`
-    else
-        echo "Unknown OS" >&2
-        exit 1
-    fi
-    if [ "$OS" != "ubuntu" ] && [ "$OS" != "debian" ]; then
+    OS=`grep ^ID= /etc/os-release | cut -d '=' -f2 | sed -e "s/[[:punct:]]\+//g"`
+    if [ "$OS" != "ubuntu" ] \
+    && [ "$OS" != "debian" ] \
+    && [ "$OS" != "centos" ] \
+    && [ "$OS" != "rhel" ] \
+    && [ "$OS" != "dedora" ]
+    then
         echo "Unsupported OS" >&2
         exit 1
     fi
@@ -950,13 +1007,12 @@ main() {
     detect_os
 
     install_base_dependencies
-    
-    rm -Rf $INSTALL_DIR/psono/$PSONO_DOCKER_PREFIX
-    mkdir -p $INSTALL_DIR/psono/$PSONO_DOCKER_PREFIX
 
     install_docker_if_not_exists
 
     install_docker_compose_if_not_exists
+
+    set_install_dir
 
     ask_parameters
 
